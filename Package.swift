@@ -13,7 +13,7 @@ let package = Package(
         //.package(url: "https://github.com/vapor/fluent-kit.git", from: "1.0.0-rc.1"),
         .package(url: "https://github.com/rnantes/fluent-kit.git", .branch("master")),
         //.package(url: "https://github.com/vapor/postgres-kit.git", from: "2.0.0"),
-        .package(url: "https://github.com/rnantes/postgres-kit.git", .branch("all-encoding-strategies")),
+        .package(url: "https://github.com/rnantes/postgres-kit.git", .branch("all-encoding-strategies"))
     ],
     targets: [
         .target(name: "FluentPostgresDriver", dependencies: [
