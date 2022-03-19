@@ -1,12 +1,12 @@
 import Logging
+import FluentKit
 import FluentBenchmark
 import FluentPostgresDriver
 import XCTest
+import PostgresKit
 
 final class FluentPostgresDriverTests: XCTestCase {
-    func testAll() throws { try self.benchmarker.testAll() }
-    
-    #if Xcode
+    //func testAll() throws { try self.benchmarker.testAll() }
     func testAggregate() throws { try self.benchmarker.testAggregate() }
     func testArray() throws { try self.benchmarker.testArray() }
     func testBatch() throws { try self.benchmarker.testBatch() }
@@ -33,10 +33,10 @@ final class FluentPostgresDriverTests: XCTestCase {
     func testSiblings() throws { try self.benchmarker.testSiblings() }
     func testSoftDelete() throws { try self.benchmarker.testSoftDelete() }
     func testSort() throws { try self.benchmarker.testSort() }
+    func testSQL() throws { try self.benchmarker.testSQL() }
     func testTimestamp() throws { try self.benchmarker.testTimestamp() }
     func testTransaction() throws { try self.benchmarker.testTransaction() }
     func testUnique() throws { try self.benchmarker.testUnique() }
-    #endif
 
     func testDatabaseError() throws {
         let sql = (self.db as! SQLDatabase)
@@ -133,15 +133,7 @@ final class FluentPostgresDriverTests: XCTestCase {
         let jsonDecoder = JSONDecoder()
         jsonDecoder.dateDecodingStrategy = .iso8601
 
-        let configuration = PostgresConfiguration(
-            hostname: env("POSTGRES_HOSTNAME_A") ?? "localhost",
-            port: env("POSTGRES_PORT_A").flatMap(Int.init) ?? PostgresConfiguration.ianaPortNumber,
-            username: "vapor_username",
-            password: "vapor_password",
-            database: env("POSTGRES_DATABASE_A") ?? "vapor_database"
-        )
-        self.dbs.use(.postgres(
-            configuration: configuration,
+        self.dbs.use(.testPostgres(subconfig: "A",
             encoder: PostgresDataEncoder(json: jsonEncoder),
             decoder: PostgresDataDecoder(json: jsonDecoder)
         ), as: .iso8601)
@@ -162,6 +154,26 @@ final class FluentPostgresDriverTests: XCTestCase {
         XCTAssertEqual(rows[0].metadata["createdAt"], expected)
     }
 
+    func testEnumAddingMultipleCases() throws {
+        try EnumMigration().prepare(on: self.db).wait()
+        try EventWithFooMigration().prepare(on: self.db).wait()
+
+        let event = EventWithFoo()
+        event.foobar = .foo
+        try event.save(on: self.db).wait()
+
+        XCTAssertNoThrow(try EnumAddMultipleCasesMigration().prepare(on: self.db).wait())
+
+        event.foobar = .baz
+        XCTAssertNoThrow(try event.update(on: self.db).wait())
+        event.foobar = .qux
+        XCTAssertNoThrow(try event.update(on: self.db).wait())
+
+        XCTAssertNoThrow(try EnumAddMultipleCasesMigration().revert(on: self.db).wait())
+        try! EventWithFooMigration().revert(on: self.db).wait()
+        try! EnumMigration().revert(on: self.db).wait()
+    }
+
     
     var benchmarker: FluentBenchmarker {
         return .init(databases: self.dbs)
@@ -179,27 +191,13 @@ final class FluentPostgresDriverTests: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         
-        let aConfig = PostgresConfiguration(
-            hostname: env("POSTGRES_HOSTNAME_A") ?? "localhost",
-            port: env("POSTGRES_PORT_A").flatMap(Int.init) ?? PostgresConfiguration.ianaPortNumber,
-            username: env("POSTGRES_USERNAME_A") ?? "vapor_username",
-            password: env("POSTGRES_PASSWORD_A") ?? "vapor_password",
-            database: env("POSTGRES_DATABASE_A") ?? "vapor_database"
-        )
-        let bConfig = PostgresConfiguration(
-            hostname: env("POSTGRES_HOSTNAME_B") ?? "localhost",
-            port: env("POSTGRES_PORT_B").flatMap(Int.init) ?? PostgresConfiguration.ianaPortNumber,
-            username: env("POSTGRES_USERNAME_B") ?? "vapor_username",
-            password: env("POSTGRES_PASSWORD_B") ?? "vapor_password",
-            database: env("POSTGRES_DATABASE_B") ?? "vapor_database"
-        )
         XCTAssert(isLoggingConfigured)
         self.eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
         self.threadPool = NIOThreadPool(numberOfThreads: System.coreCount)
         self.dbs = Databases(threadPool: threadPool, on: self.eventLoopGroup)
 
-        self.dbs.use(.postgres(configuration: aConfig), as: .a)
-        self.dbs.use(.postgres(configuration: bConfig), as: .b)
+        self.dbs.use(.testPostgres(subconfig: "A"), as: .a)
+        self.dbs.use(.testPostgres(subconfig: "B"), as: .b)
 
         let a = self.dbs.database(.a, logger: Logger(label: "test.fluent.a"), on: self.eventLoopGroup.next())
         _ = try (a as! PostgresDatabase).query("drop schema public cascade").wait()
@@ -215,6 +213,23 @@ final class FluentPostgresDriverTests: XCTestCase {
         try self.threadPool.syncShutdownGracefully()
         try self.eventLoopGroup.syncShutdownGracefully()
         try super.tearDownWithError()
+    }
+}
+
+extension DatabaseConfigurationFactory {
+    static func testPostgres(
+        subconfig: String,
+        encoder: PostgresDataEncoder = .init(), decoder: PostgresDataDecoder = .init()
+    ) -> DatabaseConfigurationFactory {
+        let baseSubconfig = PostgresConfiguration(
+            hostname: env("POSTGRES_HOSTNAME_\(subconfig)") ?? "localhost",
+            port: env("POSTGRES_PORT_\(subconfig)").flatMap(Int.init) ?? PostgresConfiguration.ianaPortNumber,
+            username: env("POSTGRES_USER_\(subconfig)") ?? "vapor_username",
+            password: env("POSTGRES_PASSWORD_\(subconfig)") ?? "vapor_password",
+            database: env("POSTGRES_DB_\(subconfig)") ?? "vapor_database"
+        )
+        
+        return .postgres(configuration: baseSubconfig, connectionPoolTimeout: .seconds(30), encoder: encoder, decoder: decoder)
     }
 }
 
@@ -262,6 +277,72 @@ struct EventMigration: Migration {
 
     func revert(on database: Database) -> EventLoopFuture<Void> {
         return database.schema(Event.schema).delete()
+    }
+}
+
+final class EventWithFoo: Model {
+    static let schema = "foobar_events"
+
+    @ID
+    var id: UUID?
+
+    @Enum(key: "foo")
+    var foobar: Foobar
+}
+
+enum Foobar: String, Codable {
+    static let schema = "foobars"
+    case foo
+    case bar
+    case baz
+    case qux
+}
+
+struct EventWithFooMigration: Migration {
+    func prepare(on database: Database) -> EventLoopFuture<Void> {
+        return database.enum(Foobar.schema).read()
+            .flatMap { foobar in
+                database.schema(EventWithFoo.schema)
+                    .id()
+                    .field("foo", foobar, .required)
+                    .create()
+            }
+    }
+
+    func revert(on database: Database) -> EventLoopFuture<Void> {
+        return database.schema(EventWithFoo.schema).delete()
+    }
+}
+
+struct EnumMigration: Migration {
+    func prepare(on database: Database) -> EventLoopFuture<Void> {
+        return database.enum(Foobar.schema)
+            .case("foo")
+            .case("bar")
+            .create()
+            .transform(to: ())
+    }
+
+    func revert(on database: Database) -> EventLoopFuture<Void> {
+        return database.enum(Foobar.schema).delete()
+    }
+}
+
+struct EnumAddMultipleCasesMigration: Migration {
+    func prepare(on database: Database) -> EventLoopFuture<Void> {
+        return database.enum(Foobar.schema)
+            .case("baz")
+            .case("qux")
+            .update()
+            .transform(to: ())
+    }
+
+    func revert(on database: Database) -> EventLoopFuture<Void> {
+        return database.enum(Foobar.schema)
+            .deleteCase("baz")
+            .deleteCase("qux")
+            .update()
+            .transform(to: ())
     }
 }
 

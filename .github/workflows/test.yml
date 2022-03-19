@@ -1,92 +1,109 @@
 name: test
-on:
-  pull_request:
-  push:
-    branches:
-    - master
+on: [ 'pull_request' ]
+
 jobs:
-  linux:
-    runs-on: ubuntu-latest
+  linux-all:
     strategy:
       fail-fast: false
       matrix:
-        image:
-          # 5.2 Stable
-          - swift:5.2-xenial
-          - swift:5.2-bionic
-          # 5.2 Unstable
-          - swiftlang/swift:nightly-5.2-xenial
-          - swiftlang/swift:nightly-5.2-bionic
-          # 5.3 Unstable
-          - swiftlang/swift:nightly-5.3-xenial
-          - swiftlang/swift:nightly-5.3-bionic
-          # Master Unsable
-          - swiftlang/swift:nightly-master-xenial
-          - swiftlang/swift:nightly-master-bionic
-          - swiftlang/swift:nightly-master-focal
-          - swiftlang/swift:nightly-master-centos8
-          - swiftlang/swift:nightly-master-amazonlinux2
-        dbimage: 
-          - postgres:11
-          - postgres:12
+        dbimage:
+          - postgres:14
           - postgres:13
-    container: ${{ matrix.image }}
+          - postgres:11
+        dbauth:
+          - trust
+          - md5
+          - scram-sha-256
+        swiftver:
+          - swift:5.2
+          - swift:5.5
+          - swift:5.6
+          - swiftlang/swift:nightly-main
+        swiftos:
+          - focal
+        include:
+          - swiftver: swift:5.2
+            test_flag: --enable-test-discovery
+    container: ${{ format('{0}-{1}', matrix.swiftver, matrix.swiftos) }}
+    runs-on: ubuntu-latest
+    env:
+      LOG_LEVEL: debug
+      POSTGRES_DB_A: 'test_database'
+      POSTGRES_DB_B: 'test_database'
+      POSTGRES_USER_A: 'test_username'
+      POSTGRES_USER_B: 'test_username'
+      POSTGRES_PASSWORD_A: 'test_password'
+      POSTGRES_PASSWORD_B: 'test_password'
+      POSTGRES_HOSTNAME_A: 'psql-a'
+      POSTGRES_HOSTNAME_B: 'psql-b'
+      POSTGRES_HOST_AUTH_METHOD: ${{ matrix.dbauth }}
     services:
-      postgres-a:
-        image: ${{ matrix.dbimage }}
-        env: 
-          POSTGRES_USER: vapor_username
-          POSTGRES_PASSWORD: vapor_password
-          POSTGRES_DB: vapor_database
-      postgres-b:
+      psql-a:
         image: ${{ matrix.dbimage }}
         env:
-          POSTGRES_USER: vapor_username
-          POSTGRES_PASSWORD: vapor_password
-          POSTGRES_DB: vapor_database
-    env:
-      POSTGRES_HOSTNAME_A: postgres-a
-      POSTGRES_HOSTNAME_B: postgres-b
-      LOG_LEVEL: info
+          POSTGRES_USER: 'test_username'
+          POSTGRES_DB: 'test_database'
+          POSTGRES_PASSWORD: 'test_password'
+          POSTGRES_HOST_AUTH_METHOD: ${{ matrix.dbauth }}
+          POSTGRES_INITDB_ARGS: --auth-host=${{ matrix.dbauth }}
+      psql-b:
+        image: ${{ matrix.dbimage }}
+        env:
+          POSTGRES_USER: 'test_username'
+          POSTGRES_DB: 'test_database'
+          POSTGRES_PASSWORD: 'test_password'
+          POSTGRES_HOST_AUTH_METHOD: ${{ matrix.dbauth }}
+          POSTGRES_INITDB_ARGS: --auth-host=${{ matrix.dbauth }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-      - name: Run tests with Thread Sanitizer
-        run: swift test --enable-test-discovery --sanitize=thread
-  macOS:
+      - name: Check out package
+        uses: actions/checkout@v3
+      - name: Run all tests with Thread Sanitizer
+        run: swift test ${{ matrix.test_flag }} --sanitize=thread
+
+  macos-all:
     strategy:
       fail-fast: false
       matrix:
-        include: 
-          - formula: postgresql@11
-            datadir: postgresql@11
-          - formula: postgresql@12
-            datadir: postgres
+        # Only test latest version and one auth method on macOS
+        dbimage:
+          - postgresql@14
+        dbauth:
+          - scram-sha-256
+        xcode:
+          - latest-stable
+          #- latest
+    runs-on: macos-11
     env:
-      POSTGRES_DATABASE_A: vapor_database_a
-      POSTGRES_DATABASE_B: vapor_database_b
-    runs-on: macos-latest
+      LOG_LEVEL: debug
+      POSTGRES_HOSTNAME_A: 127.0.0.1
+      POSTGRES_HOSTNAME_B: 127.0.0.1
+      POSTGRES_USER_A: 'test_username'
+      POSTGRES_USER_B: 'test_username'
+      POSTGRES_PASSWORD_A: 'test_password'
+      POSTGRES_PASSWORD_B: 'test_password'
+      POSTGRES_DB_A: 'test_database_a'
+      POSTGRES_DB_B: 'test_database_b'
     steps:
       - name: Select latest available Xcode
-        uses: maxim-lobanov/setup-xcode@1.0
+        uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest
-      - name: Replace Postgres install and start server
+          xcode-version: ${{ matrix.xcode }}
+      - name: Install Postgres, setup DB and auth, and wait for server start
         run: |
-          brew uninstall --force postgresql php && rm -rf /usr/local/{etc,var}/{postgres,pg}*
-          brew install ${{ matrix.formula }} && brew link --force ${{ matrix.formula }}
-          initdb --locale=C -E UTF-8 $(brew --prefix)/var/${{ matrix.datadir }}
-          brew services start ${{ matrix.formula }}
-      - name: Wait for server to be ready
-        run: until pg_isready; do sleep 1; done
+          export PATH="$(brew --prefix)/opt/${{ matrix.dbimage }}/bin:$PATH" PGDATA=/tmp/vapor-postgres-test PGUSER=postgres
+          (brew unlink postgresql || true) && brew install ${{ matrix.dbimage }} && brew link --force ${{ matrix.dbimage }}
+          initdb --locale=C --auth-host ${{ matrix.dbauth }} --username=postgres --pwfile=<(echo postgres)
+          pg_ctl start --wait
+          psql postgres <<<"CREATE ROLE $POSTGRES_USER_A LOGIN PASSWORD '$POSTGRES_PASSWORD_A';"
+          psql postgres <<<"CREATE ROLE $POSTGRES_USER_B LOGIN PASSWORD '$POSTGRES_PASSWORD_B';"
+          psql postgres <<<"CREATE DATABASE $POSTGRES_DB_A OWNER = $POSTGRES_USER_A;"
+          psql postgres <<<"CREATE DATABASE $POSTGRES_DB_B OWNER = $POSTGRES_USER_B;"
+          psql $POSTGRES_DB_A <<<"ALTER SCHEMA public OWNER TO $POSTGRES_USER_A;"
+          psql $POSTGRES_DB_B <<<"ALTER SCHEMA public OWNER TO $POSTGRES_USER_B;"
         timeout-minutes: 2
-      - name: Setup users and databases for Postgres
-        run: |
-          createuser --createdb --login vapor_username
-          for db in vapor_database_{a,b}; do
-            createdb -Ovapor_username $db && psql $db <<<"ALTER SCHEMA public OWNER TO vapor_username;"
-          done
       - name: Checkout code
-        uses: actions/checkout@v2
-      - name: Run tests with Thread Sanitizer
-        run: swift test --enable-test-discovery --sanitize=thread
+        uses: actions/checkout@v3
+      - name: Run all tests with Thread Sanitizer
+        run: |
+          swift test --sanitize=thread -Xlinker -rpath \
+                -Xlinker $(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx

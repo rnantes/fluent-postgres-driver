@@ -1,4 +1,5 @@
 import FluentSQL
+import Logging
 
 struct _FluentPostgresDatabase {
     let database: PostgresDatabase
@@ -6,6 +7,7 @@ struct _FluentPostgresDatabase {
     let encoder: PostgresDataEncoder
     let decoder: PostgresDataDecoder
     let inTransaction: Bool
+    let sqlLogLevel: Logger.Level
 }
 
 extension _FluentPostgresDatabase: Database {
@@ -24,6 +26,7 @@ extension _FluentPostgresDatabase: Database {
         default: break
         }
         let (sql, binds) = self.serialize(expression)
+        self.logger.log(level: self.sqlLogLevel, "\(sql) \(binds)")
         do {
             return try self.query(sql, binds.map { try self.encoder.encode($0) }) {
                 onOutput($0.databaseOutput(using: self.decoder))
@@ -37,6 +40,7 @@ extension _FluentPostgresDatabase: Database {
         let expression = SQLSchemaConverter(delegate: PostgresConverterDelegate())
             .convert(schema)
         let (sql, binds) = self.serialize(expression)
+        self.logger.log(level: self.sqlLogLevel, "\(sql) \(binds)")
         do {
             return try self.query(sql, binds.map { try self.encoder.encode($0) }) {
                 fatalError("unexpected row: \($0)")
@@ -49,10 +53,11 @@ extension _FluentPostgresDatabase: Database {
     func execute(enum e: DatabaseEnum) -> EventLoopFuture<Void> {
         switch e.action {
         case .create:
-            let builder = self.sql().create(enum: e.name)
+            let builder = self.create(enum: e.name)
             for c in e.createCases {
                 _ = builder.value(c)
             }
+            self.logger.log(level: self.sqlLogLevel, "\(builder.query)")
             return builder.run()
         case .update:
             if !e.deleteCases.isEmpty {
@@ -61,13 +66,17 @@ extension _FluentPostgresDatabase: Database {
             guard !e.createCases.isEmpty else {
                 return self.eventLoop.makeSucceededFuture(())
             }
-            let builder = self.sql().alter(enum: e.name)
-            for create in e.createCases {
-                _ = builder.add(value: create)
-            }
-            return builder.run()
+
+            return database.eventLoop.flatten(e.createCases.map { create in
+                let builder = self.alter(enum: e.name)
+                builder.add(value: create)
+                self.logger.log(level: self.sqlLogLevel, "\(builder.query)")
+                return builder.run()
+            })
         case .delete:
-            return self.sql().drop(enum: e.name).run()
+            let builder = self.drop(enum: e.name)
+            self.logger.log(level: self.sqlLogLevel, "\(builder.query)")
+            return builder.run()
         }
     }
 
@@ -76,20 +85,24 @@ extension _FluentPostgresDatabase: Database {
             return closure(self)
         }
         return self.database.withConnection { conn in
-            conn.simpleQuery("BEGIN").flatMap { _ in
+            self.logger.log(level: self.sqlLogLevel, "BEGIN")
+            return conn.simpleQuery("BEGIN").flatMap { _ in
                 let db = _FluentPostgresDatabase(
                     database: conn,
                     context: self.context,
                     encoder: self.encoder,
                     decoder: self.decoder,
-                    inTransaction: true
+                    inTransaction: true,
+                    sqlLogLevel: self.sqlLogLevel
                 )
                 return closure(db).flatMap { result in
-                    conn.simpleQuery("COMMIT").map { _ in
+                    self.logger.log(level: self.sqlLogLevel, "COMMIT")
+                    return conn.simpleQuery("COMMIT").map { _ in
                         result
                     }
                 }.flatMapError { error in
-                    conn.simpleQuery("ROLLBACK").flatMapThrowing { _ in
+                    self.logger.log(level: self.sqlLogLevel, "ROLLBACK")
+                    return conn.simpleQuery("ROLLBACK").flatMapThrowing { _ in
                         throw error
                     }
                 }
@@ -104,7 +117,8 @@ extension _FluentPostgresDatabase: Database {
                 context: self.context,
                 encoder: self.encoder,
                 decoder: self.decoder,
-                inTransaction: self.inTransaction
+                inTransaction: self.inTransaction,
+                sqlLogLevel: self.sqlLogLevel
             ))
         }
     }
@@ -119,7 +133,9 @@ extension _FluentPostgresDatabase: SQLDatabase {
         sql query: SQLExpression,
         _ onRow: @escaping (SQLRow) -> ()
     ) -> EventLoopFuture<Void> {
-        self.sql(encoder: encoder, decoder: decoder).execute(sql: query, onRow)
+        let (sql, binds) = self.serialize(query)
+        self.logger.log(level: self.sqlLogLevel, "\(sql) \(binds)")
+        return self.sql(encoder: encoder, decoder: decoder).execute(sql: query, onRow)
     }
 }
 
