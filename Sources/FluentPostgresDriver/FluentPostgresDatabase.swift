@@ -11,12 +11,62 @@ struct _FluentPostgresDatabase {
 }
 
 extension _FluentPostgresDatabase: Database {
+    private func key(_ key: FieldKey) -> String {
+        switch key {
+        case .id:
+            return "id"
+        case .string(let name):
+            return name
+        case .aggregate:
+            return key.description
+        case .prefix(let prefix, let key):
+            return self.key(prefix) + self.key(key)
+        }
+    }
+    
     func execute(
         query: DatabaseQuery,
         onOutput: @escaping (DatabaseOutput) -> ()
     ) -> EventLoopFuture<Void> {
+        var queryFinal = query
+        
+        var columnOverflowAliasDict = [String:String]()
+        
+        switch query.action {
+        case .read:
+            var hasLongProperty = true
+            for (i, f) in query.fields.enumerated() {
+                print(f.description)
+                
+                if case let .extendedPath(path, schema, space, alias) = f {
+                    var aliasString = (space.map { "\($0)_" } ?? "") + schema + "_" + key(path[0])
+                    if (aliasString.count > 33) {
+                        let overflowAlias = "\(UUID())_\(key(path[0]).prefix(26))"
+                        queryFinal.fields[i] = .extendedPath(path, schema: schema, space: space, alias: overflowAlias)
+                        columnOverflowAliasDict[aliasString] = overflowAlias
+                    }
+                }
+                
+//                switch f {
+//                case .path(let path, let schema):
+//                    let a = "\(schema)\(path)"
+//                    print("a - \(a)")
+//                case .extendedPath(let path, let schema, let space, let alias):
+//                    let b = "\(space.map { "\($0)." } ?? "")\(schema)\(path)"
+//                    print("b - \(b)")
+//                    print("z - \(schema)_\(path)")
+//                    print("zz - \(alias)")
+//                case .custom(let custom):
+//                    let c = "custom(\(custom))"
+//                    print("c - \(c)")
+//                }
+            }
+        default: break
+        }
+            
         var expression = SQLQueryConverter(delegate: PostgresConverterDelegate())
-            .convert(query)
+            .convert(queryFinal)
+            
         switch query.action {
         case .create where query.customIDKey != .string(""):
             expression = PostgresReturningID(
@@ -25,11 +75,14 @@ extension _FluentPostgresDatabase: Database {
             )
         default: break
         }
+        
+
         let (sql, binds) = self.serialize(expression)
         self.logger.log(level: self.sqlLogLevel, "\(sql) \(binds)")
         do {
             return try self.query(sql, binds.map { try self.encoder.encode($0) }) {
-                onOutput($0.databaseOutput(using: self.decoder))
+                var res = $0.databaseOutput(using: self.decoder, columnOverflowAliasDict: columnOverflowAliasDict)
+                onOutput(res)
             }
         } catch {
             return self.eventLoop.makeFailedFuture(error)

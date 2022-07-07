@@ -1,16 +1,19 @@
 extension PostgresRow {
-    internal func databaseOutput(using decoder: PostgresDataDecoder) -> DatabaseOutput {
+    internal func databaseOutput(using decoder: PostgresDataDecoder, columnOverflowAliasDict: [String:String] = [:]) -> DatabaseOutput {
         _PostgresDatabaseOutput(
             row: self,
-            decoder: decoder
+            decoder: decoder,
+            columnOverflowAliasDict: columnOverflowAliasDict
         )
     }
 }
 
 private struct _PostgresDatabaseOutput: DatabaseOutput {
     let row: SQLRow
+    let columnOverflowAliasDict: [String:String]
     
-    init(row: PostgresRow, decoder: PostgresDataDecoder) {
+    init(row: PostgresRow, decoder: PostgresDataDecoder, columnOverflowAliasDict: [String:String] = [:]) {
+        self.columnOverflowAliasDict = columnOverflowAliasDict
         self.row = row.sql(decoder: decoder)
     }
     
@@ -41,9 +44,16 @@ private struct _PostgresDatabaseOutput: DatabaseOutput {
         case .aggregate:
             return key.description
         case .string(let name):
+            if let nameAliased = columnOverflowAliasDict[name] {
+                return nameAliased
+            }
             return name
         case .prefix(let prefix, let key):
-            return self.columnName(prefix) + self.columnName(key)
+            let name = self.columnName(prefix) + self.columnName(key)
+            if let nameAliased = columnOverflowAliasDict[name] {
+                return nameAliased
+            }
+            return name
         }
     }
 }

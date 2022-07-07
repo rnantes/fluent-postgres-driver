@@ -21,6 +21,7 @@ final class FluentPostgresDriverTests: XCTestCase {
     func testGroup() throws { try self.benchmarker.testGroup() }
     func testID() throws { try self.benchmarker.testID() }
     func testJoin() throws { try self.benchmarker.testJoin() }
+    func testLongPropertyName() throws { try self.benchmarker.testLongPropertyName() }
     func testMiddleware() throws { try self.benchmarker.testMiddleware() }
     func testMigrator() throws { try self.benchmarker.testMigrator() }
     func testModel() throws { try self.benchmarker.testModel() }
