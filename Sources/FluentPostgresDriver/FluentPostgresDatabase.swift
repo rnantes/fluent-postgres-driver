@@ -36,7 +36,7 @@ extension _FluentPostgresDatabase: Database {
         case .read:
             var hasLongProperty = true
             for (i, f) in query.fields.enumerated() {
-                print(f.description)
+                //print(f.description)
                 
                 if case let .extendedPath(path, schema, space, alias) = f {
                     var aliasString = (space.map { "\($0)_" } ?? "") + schema + "_" + key(path[0])
