@@ -26,14 +26,15 @@ extension DatabaseConfigurationFactory {
         encodingContext: PostgresEncodingContext<some PostgresJSONEncoder> = .default,
         decodingContext: PostgresDecodingContext<some PostgresJSONDecoder> = .default,
         sqlLogLevel: Logger.Level = .debug,
-        automaticallyAliasIdentiferOverflow: Bool
+        automaticallyAliasIdentiferOverflow: Bool = false
     ) throws -> DatabaseConfigurationFactory {
         .postgres(
             configuration: try .init(url: urlString),
             maxConnectionsPerEventLoop: maxConnectionsPerEventLoop,
             connectionPoolTimeout: connectionPoolTimeout,
             encodingContext: encodingContext, decodingContext: decodingContext,
-            sqlLogLevel: sqlLogLevel
+            sqlLogLevel: sqlLogLevel,
+            automaticallyAliasIdentiferOverflow: automaticallyAliasIdentiferOverflow
         )
     }
 
@@ -54,14 +55,16 @@ extension DatabaseConfigurationFactory {
         connectionPoolTimeout: TimeAmount = .seconds(10),
         encodingContext: PostgresEncodingContext<some PostgresJSONEncoder> = .default,
         decodingContext: PostgresDecodingContext<some PostgresJSONDecoder> = .default,
-        sqlLogLevel: Logger.Level = .debug
+        sqlLogLevel: Logger.Level = .debug,
+        automaticallyAliasIdentiferOverflow: Bool = false
     ) throws -> DatabaseConfigurationFactory {
         .postgres(
             configuration: try .init(url: url),
             maxConnectionsPerEventLoop: maxConnectionsPerEventLoop,
             connectionPoolTimeout: connectionPoolTimeout,
             encodingContext: encodingContext, decodingContext: decodingContext,
-            sqlLogLevel: sqlLogLevel
+            sqlLogLevel: sqlLogLevel,
+            automaticallyAliasIdentiferOverflow: automaticallyAliasIdentiferOverflow
         )
     }
 
@@ -116,7 +119,8 @@ extension DatabaseConfigurationFactory {
         maxConnectionsPerEventLoop: Int = 1,
         connectionPoolTimeout: TimeAmount = .seconds(10),
         encodingContext: PostgresEncodingContext<some PostgresJSONEncoder>,
-        sqlLogLevel: Logger.Level = .debug
+        sqlLogLevel: Logger.Level = .debug,
+        automaticallyAliasIdentiferOverflow: Bool = false
     ) -> DatabaseConfigurationFactory {
         .postgres(
             configuration: configuration,
@@ -124,7 +128,8 @@ extension DatabaseConfigurationFactory {
             connectionPoolTimeout: connectionPoolTimeout,
             encodingContext: encodingContext,
             decodingContext: .default,
-            sqlLogLevel: sqlLogLevel
+            sqlLogLevel: sqlLogLevel,
+            automaticallyAliasIdentiferOverflow: automaticallyAliasIdentiferOverflow
         )
     }
 
@@ -135,7 +140,8 @@ extension DatabaseConfigurationFactory {
         maxConnectionsPerEventLoop: Int = 1,
         connectionPoolTimeout: TimeAmount = .seconds(10),
         decodingContext: PostgresDecodingContext<some PostgresJSONDecoder>,
-        sqlLogLevel: Logger.Level = .debug
+        sqlLogLevel: Logger.Level = .debug,
+        automaticallyAliasIdentiferOverflow: Bool = false
     ) -> DatabaseConfigurationFactory {
         .postgres(
             configuration: configuration,
@@ -143,7 +149,8 @@ extension DatabaseConfigurationFactory {
             connectionPoolTimeout: connectionPoolTimeout,
             encodingContext: .default,
             decodingContext: decodingContext,
-            sqlLogLevel: sqlLogLevel
+            sqlLogLevel: sqlLogLevel,
+            automaticallyAliasIdentiferOverflow: automaticallyAliasIdentiferOverflow
         )
     }
 
@@ -153,7 +160,8 @@ extension DatabaseConfigurationFactory {
         configuration: SQLPostgresConfiguration,
         maxConnectionsPerEventLoop: Int = 1,
         connectionPoolTimeout: TimeAmount = .seconds(10),
-        sqlLogLevel: Logger.Level = .debug
+        sqlLogLevel: Logger.Level = .debug,
+        automaticallyAliasIdentiferOverflow: Bool = false
     ) -> DatabaseConfigurationFactory {
         .postgres(
             configuration: configuration,
@@ -161,7 +169,8 @@ extension DatabaseConfigurationFactory {
             connectionPoolTimeout: connectionPoolTimeout,
             encodingContext: .default,
             decodingContext: .default,
-            sqlLogLevel: sqlLogLevel
+            sqlLogLevel: sqlLogLevel,
+            automaticallyAliasIdentiferOverflow: automaticallyAliasIdentiferOverflow
         )
     }
 }
